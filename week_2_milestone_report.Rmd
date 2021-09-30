@@ -1,0 +1,493 @@
+---
+title: "Week 2 Milestone Report"
+author: "Eric Oden"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+    html_document:
+        toc: true
+        toc_float: true
+        theme: united
+---
+
+## Introduction
+
+This milestone report presents an exploratory analysis of the data provided for
+the Natural Language Processing (NPL) capstone project from the Coursera Johns
+Hopkins Data Science Specialization. The ultimate goal of the project is to
+develop a user-friendly Shiny app for text prediction. To develop the prediction
+model, a data set of text files is provided by the company
+[Swiftkey](https://www.microsoft.com/en-us/swiftkey?activetab=pivot_1%3aprimaryr2).
+The data is a corpus of blog, news, and twitter text in English, German,
+Finnish, and Russian. In this report, we shall perform a basic summary of the
+English-language data, as well as a study of the $N$-gram frequency. Finally, we
+shall outline the plan to use the data for our prediction algorithm.
+
+```{r setup, echo = FALSE, cache = TRUE, message = FALSE, warning = FALSE}
+
+setwd("~/Coursera/data-science/data-science-capstone")
+rm(list = ls())
+options(width = 150)
+
+library('knitr')
+library('stringi')
+library('gridExtra')
+library('tm')
+library('ggplot2')
+library('kableExtra')
+library('slam') # working with sparse matrices
+
+```
+
+## Exploratory Analysis
+
+The [data
+set](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip)
+is downloaded from the Coursera page. The files associated with English-language
+blogs, news, and tweets are then read into memory. The corresponding code is
+included in [Appendix A](#A).
+
+```{r download, echo = FALSE, message = FALSE, cache = TRUE}
+
+DATA_URL <- 'https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/'
+FILE_NAME <- 'Coursera-SwiftKey.zip'
+
+if (!file.exists('data')) {
+    dir.create('data')
+}
+
+if (!file.exists('data/final')) {
+    temp_file <- tempfile()
+    download.file(paste0(DATA_URL, FILE_NAME), temp_file)
+    unzip(temp_file, exdir = 'data')
+    unlink(temp_file)
+}
+
+read_file <- function(file_name) {
+    con <- file(file_name, open = 'r')
+    on.exit(close(con))
+    readLines(con, encoding = "UTF-8", skipNul = TRUE, warn = FALSE)
+}
+
+dir <- './data/final/en_US/'
+blogs_file <- paste0(dir, 'en_US.blogs.txt')
+news_file <- paste0(dir, 'en_US.news.txt')
+twitter_file <- paste0(dir, 'en_US.twitter.txt')
+
+blogs <- read_file(blogs_file)
+news <- read_file(news_file)
+twitter <- read_file(twitter_file)
+
+```
+
+### Basic Summary
+
+We start our exploration by peeking at the files themselves, as well as
+computing global statistics about the data (file size, line counts, etc.).
+
+#### Manual Inspection
+
+Reading the first couple lines of the blogs file:
+
+```{r blog_peek, echo = FALSE}
+
+blogs[1:2]
+
+```
+
+the news file:
+
+```{r news_peek, echo = FALSE}
+
+news[1:2]
+
+```
+
+and the twitter file:
+
+```{r twitter_peek, echo = FALSE}
+
+twitter[1:2]
+
+```
+
+The text in the lines appear to indeed stem from the corresponding sources.
+Looking at several other lines of each, tweets tend to use a
+stream-of-consciousness or conversational tone, using incomplete sentences,
+stump words (e.g., "Fri", "Cali"), misspellings and internet slang (e.g., "ya
+ik", "time 4 lunch"). Meanwhile, news and blogs text generally observe the rules
+of grammar and proper spelling, with the main four writing styles (persuasive,
+narrative, expository, and descriptive) appearing in the blog text, while the
+news files are primarily expository. We observe that the lines of text include
+all capital and lower case letters, numbers, punctuation (including nonstandard,
+like double exclamation marks), miscellaneous symbols (*, ~, |, #, etc.), URLS,
+twitter handles, email addresses, emoticons, and emojis. We will need to take
+these variations into account when we prepare our model.
+
+#### Global Statistics
+
+We now summarize each file. In particular, we measure the file size (in
+[mebibytes](https://en.wikipedia.org/wiki/Byte#Multiple-byte_units)), number of
+lines, number of words, number of characters, mean words per line (WPL), mean
+characters per word (CPW), and maximum characters per line (CPL).
+
+```{r summarize, cache = TRUE, echo = FALSE}
+
+file_size <- sapply(list(blogs_file, news_file, twitter_file),
+                    function(x) round(file.info(x)$size / 1024 ^ 2))
+
+num_lines <- sapply(list(blogs, news, twitter), length)
+
+num_words <- sapply(list(blogs, news, twitter), stri_stats_latex)[4,]
+
+num_chars <- sapply(list(blogs, news, twitter), 
+                    function (x) sum(nchar(x)))
+
+wpl <- lapply(list(blogs, news, twitter), function(x) stri_count_words(x))
+names(wpl) <- c('blogs', 'news', 'twitter')
+
+mean_wpl <- sapply(wpl, mean)
+
+cpl <- lapply(list(blogs, news, twitter), function(x) nchar(x))
+names(cpl) <- c('blogs', 'news', 'twitter')
+
+mean_cpl <- sapply(cpl, mean)
+
+mean_cpw <- mean_cpl / mean_wpl
+
+max_cpl <- sapply(cpl, max)
+
+summary <- data.frame(
+    File = c('en_US.blogs.txt', 'en_US.news.txt', 'en_US.twitter.txt'),
+    Size = paste(file_size , 'MiB'),
+    Lines = num_lines,
+    Words = num_words,
+    Characters = num_chars,
+    MeanWPL = round(mean_wpl, 1),
+    MeanCPW = round(mean_cpw, 1),
+    MaxCPL = round(max_cpl),
+    row.names = c("blogs", "news", "twitter")
+)
+
+kable(summary) %>% kable_styling(position = "left")
+
+```
+
+The code to produce the table is in [Appendix B](#B). The files are each quite
+large (for reference, 200 MiB is about 22 minutes of uncompressed audio). We
+observe that blog lines are the most verbose on average, followed by new lines,
+then tweets. The news lines have the greatest number of characters per word,
+followed by the blog lines, then tweets. Meanwhile, there are far more lines of
+twitter text than blogs or news text. We finally hypothesize the twitter
+text comes from samples taken before November 8, 2017, when twitter doubled the
+character limit to 280.
+
+<!-- We can also create histograms for the words and -->
+<!-- characters per line for each kind of text. The code to produce the histograms is -->
+<!-- in [Appendix C](#C). -->
+
+<!-- ```{r histogram, cache = TRUE, echo = FALSE, message = FALSE, fig.height = 4} -->
+<!-- MakeHist <- function(type, text) { -->
+<!--     if (type == "words"){ -->
+<!--         g <- qplot(wpl[[text]], -->
+<!--                    xlab = paste(text, "WPL"),  -->
+<!--                    ylab = "Count", -->
+<!--                    height = 1, -->
+<!--                    width = 1 ) -->
+<!--     } -->
+<!--     else{ -->
+<!--         g <- qplot(cpl[[text]], -->
+<!--            xlab = paste(text, "CPL"),  -->
+<!--            ylab = "Count") -->
+<!--     } -->
+<!-- } -->
+
+<!-- g1 <- MakeHist('words', 'blogs') -->
+<!-- g2 <- MakeHist('words', 'news') -->
+<!-- g3 <- MakeHist('words', 'twitter') -->
+<!-- grid.arrange(g1, g2, g3, ncol = 3) -->
+
+<!-- g4 <- MakeHist('chars', 'blogs') -->
+<!-- g5 <- MakeHist('chars', 'news') -->
+<!-- g6 <- MakeHist('chars', 'twitter') -->
+<!-- grid.arrange(g4, g5, g6, ncol = 3) -->
+
+<!-- ``` -->
+
+### $N$-gram Analysis
+
+
+A central structure in the NLP literature is the
+[$N$-gram](https://en.wikipedia.org/wiki/$N$-gram): "a contiguous sequence of *n*
+items from a given sample of text or speech." We shall investigate the frequency
+of the 1-grams (unigrams), 2-grams (bigrams), and 3-grams (trigrams) in our data
+set, where an "item" is a word.
+
+#### Subsetting and Cleaning
+
+However, because the files are quite large, and because identifying $N$-gram
+counts is a computationally expensive process, we shall select a smaller subset
+for our analysis. In particular, we shall sample (without replacement) 1\% of
+the lines from each of the three files. We'll then combine the resulting subsets
+into a single set on which we'll perform our analysis. While the blogs, news,
+and twitter files are 200 MiB, 196 MiB and 159 MiB, respectively, the sampled
+data is only 5.9 MiB. The code to perform this subsetting and aggregating is in
+[Appendix C](#C).
+
+```{r subset, cache = TRUE, echo = FALSE, warning = FALSE}
+get_subset <- function (text) {
+    name <- deparse(substitute(text))
+    sample(text, size = summary[name, 'Lines'] * 0.01, replace = FALSE)
+}
+
+blogs_subset <- get_subset(blogs)
+
+news_subset <- get_subset(news)
+
+twitter_subset <- get_subset(twitter)
+
+en_subset <- c(blogs_subset, news_subset, twitter_subset)
+
+# clear up memory
+rm(blogs, news, twitter)
+rm(cpl, wpl)
+rm(blogs_subset, news_subset, twitter_subset)
+```
+
+Next, we shall clean this smaller data set. We shall perform the 
+following steps:
+
+* remove URLs, email addresses, twitter handles, and hash tags
+* remove punctuation marks
+* remove numbers
+* convert all letters to lowercase
+* trim white space
+* remove profanity
+
+The code to perform this processing is in
+[Appendix D](#D).
+
+We should note that a common step in NPL is to remove stop words (highly
+frequently used words which provide little information, like "the", "is", etc.).
+However, because our goal is to predict text, these should be kept since, by
+definition, a user will frequently intend to type a stop word.
+
+Regarding profanity. A user may well intend to write a bad word, and removing
+such text from our data restricts our ability to predict it. However, between a
+capacity to predict profane language and avoiding suggesting bad words to children and
+those upset by them (a group of which I am a card-carrying member), the latter
+is preferable. To this end, we use a [fairly popular
+list](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)
+(SFW), found on Github.
+
+```{r process_text, echo = FALSE, cache = TRUE}
+
+en_corpus <- VCorpus(VectorSource(en_subset))
+
+removePattern <- content_transformer(function(x, pattern) gsub(pattern, "", x))
+
+en_corpus <- tm_map(en_corpus, removePattern, "(f|ht)tp(s?)://\\S+")
+en_corpus <- tm_map(en_corpus, removePattern, 
+                    "[[:alnum:]\\.-]+@[[:alnum:].[:alnum:]]+")
+en_corpus <- tm_map(en_corpus, removePattern, "@\\S+")
+en_corpus <- tm_map(en_corpus, removePattern, "#\\S+")
+en_corpus <- tm_map(en_corpus, removePattern, "-")
+en_corpus <- tm_map(en_corpus, content_transformer(removePunctuation))
+en_corpus <- tm_map(en_corpus, content_transformer(removeNumbers))
+en_corpus <- tm_map(en_corpus, content_transformer(tolower))
+en_corpus <- tm_map(en_corpus, content_transformer(stripWhitespace))
+
+# download bad word file
+URL <- 'https://raw.githubusercontent.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/master/en'
+if (!file.exists('data/bad_words.csv')) {
+    download.file(URL, 'data/bad_words.csv')
+}
+bad_words <- readLines('./data/bad_words.csv')
+
+# remove bad words
+removeBadWords <- content_transformer(function(x) removeWords(x, bad_words))
+en_corpus <- tm_map(en_corpus, removeBadWords)
+
+```
+
+<!-- The first five lines of the resulting corpus: -->
+
+<!-- ```{r, eval = true, echo = false} -->
+
+<!-- printlines <- function(cps, num_lines=5) { -->
+<!--     for (i in 1:num_lines){ -->
+<!--         print(cps[[i]]$content) -->
+<!--     } -->
+<!-- } -->
+<!-- printlines(en_corpus, num_lines=10) -->
+
+<!-- ``` -->
+
+#### Frequency Study
+
+We now tokenize the text into unigrams, bigrams, and trigrams, and for each
+type of token, visualize the top 20 most frequently appearing in the corpus:
+
+```{r plot_frequencies, echo = FALSE, cache = TRUE}
+
+UnigramTokenizer <- 
+    function(x) unlist(lapply(ngrams(words(x), 1), paste, collapse = " "))
+
+BigramTokenizer <- 
+    function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+
+TrigramTokenizer <- 
+    function(x) unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+
+getFreq <- function(tdm) {
+    freq <- sort(row_sums(tdm), decreasing = TRUE)
+    return(data.frame(word = names(freq), freq = freq, row.names = NULL))
+}
+
+plotFreq <- function(df, label){
+    ggplot(df[1:20,], aes(x = reorder(word, -freq), y = freq)) +
+    geom_bar(stat = "identity") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+        labs(x = label, y = "Frequency", title = paste0("Top 20 ", label, "s"))
+}
+
+en_corpus %>% 
+    TermDocumentMatrix(control = list(tokenize = UnigramTokenizer)) %>% 
+    getFreq() %>% 
+    plotFreq("Unigram")
+
+en_corpus %>% 
+    TermDocumentMatrix(control = list(tokenize = BigramTokenizer)) %>% 
+    getFreq() %>% 
+    plotFreq("Bigram")
+
+en_corpus %>% 
+    TermDocumentMatrix(control = list(tokenize = TrigramTokenizer)) %>% 
+    getFreq() %>% 
+    plotFreq("Trigram")
+
+```
+
+The code to create these plots is in [Appendix E](#E). In the first plot, we
+observe [Zipf's law](https://en.wikipedia.org/wiki/Zipf%27s_law) in action: the
+most frequent word, "the", is used roughly twice as frequently as the second most
+frequent word, "and", and roughly three times as frequently as the third most
+frequent word, "you". 
+
+We may be able to exploit Zipf's law. If the majority of word instances are only
+in a (relatively) small dictionary of words, we may be able to train our model
+on a significantly smaller set. We can create a plot of the coverage of all
+unigram instances in the corpus versus the number of unigrams in a frequency
+sorted dictionary:
+
+```{r coverage, cache = TRUE, echo = FALSE}
+
+unigram_tdm <- TermDocumentMatrix(en_corpus, 
+                                  control = list(tokenize = UnigramTokenizer))
+unigram_freq <- row_sums(unigram_tdm)
+num_words <- sum(unigram_freq)
+sorted_unigram_freq <- sort(unigram_freq, decreasing = TRUE)
+coverage <- cumsum(sorted_unigram_freq) / num_words
+df <- as.data.frame(coverage)
+df$index <- 1:nrow(df)
+
+cover_90 <- min(which(coverage > 0.9))
+cover_95 <- min(which(coverage > 0.95))
+cover_99 <- min(which(coverage > 0.99))
+
+ggplot(df, aes(x=index, y=coverage)) + 
+    geom_line() +
+    xlab("Number of unique words in frequency sorted dictionary") +
+    ylab("Coverage of word instances") +
+    geom_segment(aes(x = cover_90, xend = cover_90, y = 0, yend = 0.9), color = 'red') +
+    geom_segment(aes(x = cover_95, xend = cover_95, y = 0, yend = 0.95), color = 'red') +
+    geom_segment(aes(x = cover_99, xend = cover_99, y = 0, yend = 0.99), color = 'red') +
+    geom_segment(aes(x = 0, xend = cover_90, y = 0.9, yend = 0.9), color = 'red') +
+    geom_segment(aes(x = 0, xend = cover_95, y = 0.95, yend = 0.95), color = 'red') +
+    geom_segment(aes(x = 0, xend = cover_99, y = 0.99, yend = 0.99), color = 'red') +
+    geom_point(aes(x = cover_95, y = 0.95)) +
+    geom_point(aes(x = cover_99, y = 0.99))
+    
+```
+
+The code for this plot is in [Appendix F](#F). We observe `r cover_90` words
+represent 90% of all word instances, `r cover_95` words represent 95% and `r cover_99` 
+words represent 99%. This plot indicates we may be able to use a
+significantly smaller subset of our data (i.e., the most frequent unigrams,
+bigrams, etc.) without sacrificing modeling strength.
+
+## Next steps
+
+Having performed some exploratory analysis, we can now outline the plan for
+building the prediction model.
+
+* First, apply a Markov assumption: suppose the probability of the next word in
+a sequence depends only on a limited history of preceding words. Supposing
+further that it only depends on the previous word, the probability of word $w_n$
+depends only on word $w_{n-1}$: $$P(w_n \mid w_{n-1}, w_{n-2}, \dots, w_1) =
+P(w_n \mid w_{n-1}).$$ 
+* We can then calculate the probabilities in the following
+way: $$P(w_n \mid w_{n-1}) =
+\frac{\text{Count}(w_{n-1}w_n)}{\text{Count}(w_{n-1})},$$ where
+$\text{Count}(w_{n-1}w_n)$ is the number of instances of the bigram $w_{n-1}w_n$
+in the corpus, and $\text{Count}(w_{n-1})$ is the number of instances of the
+unigram $w_{n-1}$ in the corpus. 
+* A similar process can be performed with trigrams,
+quadrigrams, etc. (we'd expect better predictions by doing so). However, this quickly
+becomes computationally expensive. Furthermore, $N$-grams where $N>4$, even for 
+our fairly large data set, will likely be fairly sparse, since the probability 
+of a given sequence of words drops precipitously with additional words.
+* Basic $N$-gram models such as the above struggle with rare sequences of words.
+In order to handle this, we can apply a method like [Good-Turing
+Smoothing](https://www.cs.cornell.edu/courses/cs6740/2010sp/guides/lec11.pdf), 
+which (intelligently) shifts some of the probability mass to unseen sequences.
+* Another avenue is use a linear combination of unigram, bigram, and & trigram
+probabilities (i.e., using a so called ``finite-mixture model''): 
+$$P(w_n \mid w_{n-2}w_{n-1}) = \lambda_3 P(w_n \mid w_{n-2} w_{n-1}) + \lambda_2 P(w_n |
+w_{n-1}) + \lambda_1 P(w_n).$$
+* Another still is [Katz's back-off
+model](https://en.wikipedia.org/wiki/Katz%27s_back-off_model), which uses the
+highest order $N$-gram probabilities available.
+
+Altogether, there are a number of methods we can apply to create a successful 
+$N$-gram model from our data. We shall use the standard machine learning 
+techniques of model validation/parameter tuning to arrive at a model with the 
+highest accuracy we can. 
+
+## Appendix {#appendix}
+
+### A {#A}
+Downloading and reading the text files
+```{r ref.label = 'download', echo = TRUE, eval = FALSE}
+```
+
+### B {#B}
+Creating the data summary table
+```{r ref.label = 'summarize', echo = TRUE, eval = FALSE}
+```
+
+### C {#C}
+Subsetting the text
+```{r ref.label = 'subset', echo = TRUE, eval = FALSE}
+```
+
+### D {#D}
+Processing the subsetted text. We use the
+[`tm`](https://cran.r-project.org/web/packages/tm/) package to process our
+subset into a corpus.
+```{r ref.label = 'process_text', echo = TRUE, eval = FALSE}
+```
+
+### E {#E}
+Plotting the unigram, bigram, and trigram frequencies
+```{r ref.label = 'plot_frequencies', echo = TRUE, eval = FALSE}
+```
+
+### F {#F}
+Plotting the word coverage
+```{r ref.label = 'coverage', echo = TRUE, eval = FALSE}
+```
+
+### Complete Code
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE} 
+```

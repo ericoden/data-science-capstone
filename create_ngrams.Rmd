@@ -1,0 +1,153 @@
+
+Download and read:
+
+```{r, cache=True}
+
+rm(list = ls())
+source('utility-functions.R')
+download_data()
+data <- read_data(0.05)
+cutoff <- 1 # must be at least this many instances + 1 to be considered
+n <- 3 # keep the n most frequent instance
+```
+
+Clean data:
+
+```{r, cache=True}
+
+data <- clean_data(data) 
+
+```
+
+Get unigrams:
+
+```{r}
+
+unigrams <- sort(get_unigram_counts(data), decreasing=TRUE)
+unigrams <- unigrams[unigrams > cutoff]
+first_word <- names(unigrams)
+count <- unlist(unigrams, use.names=FALSE)
+unigrams <- data.frame(first_word, count)
+unigrams <- unigrams[order(unigrams$first_word),]
+save(unigrams, file='text_prediction/unigrams.RData')
+rm(unigrams, first_word)
+
+```
+
+Get bigrams:
+
+```{r}
+n <- 3
+bigrams <- sort(get_bigram_counts(data), decreasing=TRUE)
+bigrams <- bigrams[bigrams > cutoff]
+indices <- numeric()
+remaining_bigrams <- bigrams
+for (i in 1:n){
+    first_word <- sapply(names(remaining_bigrams), function(x) words(x)[1], USE.NAMES = FALSE)
+    first_indices <-  match(unique(first_word), first_word)
+    if (i > 1){
+        first_indices <- first_indices[-1]
+    }
+    indices <- c(indices, first_indices)
+    names(remaining_bigrams)[indices] <- rep("NULL", length(indices))
+}
+first_word <- sapply(names(bigrams[indices]), function(x) words(x)[1], USE.NAMES = FALSE)
+second_word <- sapply(names(bigrams[indices]), function(x) words(x)[2])
+count <- unlist(bigrams[indices], use.names=FALSE)
+bigrams <- data.frame(first_word, second_word, count)
+bigrams <- bigrams[order(bigrams$first_word, -count),]
+save(bigrams, file='text_prediction/bigrams.RData')
+rm(bigrams, first_word, second_word, remaining_bigrams)
+```
+
+Get trigrams:
+
+```{r}
+trigrams <- sort(get_trigram_counts(data), decreasing=TRUE)
+trigrams <- trigrams[trigrams > cutoff]
+indices <- numeric()
+remaining_trigrams <- trigrams
+for (i in 1:n){
+    first_bigram <- sapply(names(remaining_trigrams), function(x) paste0(words(x)[1],' ',words(x)[2]))
+    first_indices <-  match(unique(first_bigram), first_bigram)
+    if (i > 1){
+        first_indices <- first_indices[-1]
+    }
+    indices <- c(indices, first_indices)
+    names(remaining_trigrams)[indices] <- rep("NULL", length(indices))
+}
+first_word <- sapply(names(trigrams[indices]), function(x) words(x)[1])
+second_word <- sapply(names(trigrams[indices]), function(x) words(x)[2])
+third_word <- sapply(names(trigrams[indices]), function(x) words(x)[3])
+count <- unlist(trigrams[indices], use.names=FALSE)
+trigrams <- data.frame(first_word, second_word, third_word, count)
+trigrams <- trigrams[order(trigrams$first_word, trigrams$second_word, -count),]
+save(trigrams, file='text_prediction/trigrams.RData')
+rm(trigrams, first_bigram, first_word, second_word, third_word, indices, remaining_trigrams)
+```
+
+Get quadrigrams:
+
+```{r}
+quadrigrams <- sort(get_quadrigram_counts(data), decreasing=TRUE)
+quadrigrams <- quadrigrams[quadrigrams > cutoff]
+
+indices <- numeric()
+remaining_quadrigrams <- quadrigrams
+for (i in 1:n){
+    first_trigram <- sapply(names(remaining_quadrigrams), function(x) paste0(words(x)[1],' ',words(x)[2], ' ',words(x)[3]))
+    first_indices <-  match(unique(first_trigram), first_trigram)
+    if (i > 1){
+        first_indices <- first_indices[-1]
+    }
+    indices <- c(indices, first_indices)
+    names(remaining_quadrigrams)[indices] <- rep("NULL", length(indices))
+}
+
+first_word <- sapply(names(quadrigrams[indices]), function(x) words(x)[1])
+second_word <- sapply(names(quadrigrams[indices]), function(x) words(x)[2])
+third_word <- sapply(names(quadrigrams[indices]), function(x) words(x)[3])
+fourth_word <- sapply(names(quadrigrams[indices]), function(x) words(x)[4])
+count <- unlist(quadrigrams[indices], use.names=FALSE)
+quadrigrams <- data.frame(first_word, second_word, third_word, fourth_word, count)
+quadrigrams <- quadrigrams[order(quadrigrams$first_word, quadrigrams$second_word, quadrigrams$third_word,-count),]
+save(quadrigrams, file='text_prediction/quadrigrams.RData')
+rm(quadrigrams, first_word, second_word, third_word, fourth_word, indices, first_trigram, remaining_quadrigrams)
+```
+
+Get quintigrams:
+
+```{r}
+quintigrams <- sort(get_quintigram_counts(data), decreasing=TRUE)
+quintigrams <- quintigrams[quintigrams > cutoff]
+
+indices <- numeric()
+remaining_quintigrams <- quintigrams
+for (i in 1:n){
+    first_quadrigram <- sapply(names(remaining_quintigrams), function(x) paste0(words(x)[1],' ',words(x)[2], ' ',words(x)[3],' ',words(x)[4]))
+    first_indices <-  match(unique(first_quadrigram), first_quadrigram)
+    if (i > 1){
+        first_indices <- first_indices[-1]
+    }
+    indices <- c(indices, first_indices)
+    names(remaining_quintigrams)[indices] <- rep("NULL", length(indices))
+}
+
+first_word <- sapply(names(quintigrams[indices]), function(x) words(x)[1])
+second_word <- sapply(names(quintigrams[indices]), function(x) words(x)[2])
+third_word <- sapply(names(quintigrams[indices]), function(x) words(x)[3])
+fourth_word <- sapply(names(quintigrams[indices]), function(x) words(x)[4])
+fifth_word <- sapply(names(quintigrams[indices]), function(x) words(x)[5])
+
+count <- unlist(quintigrams[indices], use.names=FALSE)
+quintigrams <- data.frame(first_word, second_word, third_word, fourth_word, fifth_word, count)
+quintigrams <- quintigrams[order(quintigrams$first_word, quintigrams$second_word, quintigrams$third_word, quintigrams$fourth_word,-count),]
+
+save(quintigrams, file='text_prediction/quintigrams.RData')
+rm(quintigrams, first_word, second_word, third_word, fourth_word, fifth_word, indices, first_quadrigram, remaining_quintigrams)
+```
+
+
+```{r}
+rm(data)
+```

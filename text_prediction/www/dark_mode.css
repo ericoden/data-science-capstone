@@ -1,0 +1,30 @@
+/* Get a fancy font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans&display=swap');
+
+body {
+  background-color: white;
+  color: white; /* text color */
+}
+
+/* Change header text to imported font */
+h2 {
+  font-family: 'Open Sans', sans-serif;
+  text-align:center;
+}
+
+
+.box{	
+	font-size: 10px;
+	color:white;
+	width: 600px;
+	margin: 0 auto;
+	padding:2%;
+	background-color:lightblue;
+	border: none;
+	border-radius: 1.5rem;
+}
+
+/* Make text visible on inputs */
+.shiny-input-container {
+  color: #474747;
+}
